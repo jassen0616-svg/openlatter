@@ -72,6 +72,7 @@ img, svg { display: block; max-width: 100%; }
 a { color: inherit; text-decoration: none; }
 button, input { font: inherit; }
 button { cursor: pointer; }
+button:disabled { cursor: default; }
 p { margin: 0; text-wrap: pretty; }
 h1, h2, h3 { margin: 0; font-family: var(--font-display); text-wrap: balance; }
 :focus-visible { outline: 0; box-shadow: var(--focus-ring); }
@@ -162,6 +163,7 @@ h1, h2, h3 { margin: 0; font-family: var(--font-display); text-wrap: balance; }
     border-color var(--motion-fast) var(--ease-standard);
 }
 .btn:active { transform: scale(0.98); }
+.btn:disabled { opacity: 0.72; transform: none; }
 .btn-primary { background: var(--accent); color: var(--accent-on); border-color: var(--accent); }
 .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 .topnav {

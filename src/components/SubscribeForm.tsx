@@ -23,20 +23,22 @@ export function SubscribeForm({
   placeholder,
   defaultNote
 }: SubscribeFormProps) {
-  const { buttonLabel, email, note, noteState, submitEmail } = useSubscription();
+  const { buttonLabel, email, isSubmitting, note, noteState, submitEmail } = useSubscription();
   const [draft, setDraft] = useState("");
   const [isDirty, setIsDirty] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const value = isDirty ? draft : email;
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    const ok = submitEmail(value);
-    if (!ok) {
+    const result = await submitEmail(value);
+    if (result === "invalid") {
       inputRef.current?.focus();
       return;
     }
+
+    if (result === "error") return;
 
     setIsDirty(false);
     setDraft("");
@@ -75,7 +77,12 @@ export function SubscribeForm({
             setDraft(event.target.value);
           }}
         />
-        <button className="btn btn-primary" type="submit" data-od-id={buttonOdId}>
+        <button
+          className="btn btn-primary"
+          type="submit"
+          data-od-id={buttonOdId}
+          disabled={isSubmitting}
+        >
           {buttonLabel}
         </button>
       </form>

@@ -17,7 +17,8 @@ type SubscriptionContextValue = {
   note: string | null;
   noteState: NoteState;
   buttonLabel: string;
-  submitEmail: (email: string) => boolean;
+  isSubmitting: boolean;
+  submitEmail: (email: string) => Promise<"success" | "invalid" | "error">;
 };
 
 const STORAGE_KEY = "openlatterSubscriber";
@@ -84,6 +85,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     note: null,
     state: "idle"
   });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const email = storedEmail || volatileEmail;
   const note =
@@ -92,27 +94,59 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   const noteState: NoteState =
     feedback.state !== "idle" ? feedback.state : email ? "success" : "idle";
 
-  const submitEmail = useCallback((value: string) => {
+  const submitEmail = useCallback(async (value: string) => {
     const nextEmail = value.trim();
+    const normalizedEmail = nextEmail.toLowerCase();
 
-    if (!validEmail(nextEmail)) {
+    if (!validEmail(normalizedEmail)) {
       setFeedback({ note: "请输入一个有效的邮箱地址。", state: "error" });
-      return false;
+      return "invalid";
     }
 
-    setVolatileEmail(nextEmail);
+    setIsSubmitting(true);
+
     try {
-      window.localStorage.setItem(STORAGE_KEY, nextEmail);
+      const response = await fetch("/api/subscribe", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ email: normalizedEmail })
+      });
+
+      const result = (await response.json().catch(() => null)) as {
+        ok?: boolean;
+        email?: string;
+        message?: string;
+      } | null;
+
+      if (!response.ok || !result?.ok) {
+        setFeedback({
+          note: result?.message || "暂时无法完成绑定，请稍后再试。",
+          state: "error"
+        });
+        return "error";
+      }
+    } catch {
+      setFeedback({ note: "暂时无法完成绑定，请稍后再试。", state: "error" });
+      return "error";
+    } finally {
+      setIsSubmitting(false);
+    }
+
+    setVolatileEmail(normalizedEmail);
+    try {
+      window.localStorage.setItem(STORAGE_KEY, normalizedEmail);
       notifyStoredEmailChanged();
     } catch {
       // Keep the visible success state even when storage is unavailable.
     }
 
     setFeedback({
-      note: `已绑定 ${nextEmail}。你现在是 openlatter 用户，下一封会在上午送达。`,
+      note: `已绑定 ${normalizedEmail}。你现在是 openlatter 用户，下一封会在上午送达。`,
       state: "success"
     });
-    return true;
+    return "success";
   }, []);
 
   const value = useMemo(
@@ -120,10 +154,11 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       email,
       note,
       noteState,
-      buttonLabel: email ? "已绑定" : "绑定",
+      isSubmitting,
+      buttonLabel: isSubmitting ? "绑定中" : email ? "已绑定" : "绑定",
       submitEmail
     }),
-    [email, note, noteState, submitEmail]
+    [email, isSubmitting, note, noteState, submitEmail]
   );
 
   return (
