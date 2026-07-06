@@ -1,0 +1,8 @@
+.codex/
+.git/
+.next/
+.vercel/
+node_modules/
+open-design-source/
+Open-Design-落地页.zip
+*.log
