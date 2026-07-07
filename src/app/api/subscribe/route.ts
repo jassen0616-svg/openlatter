@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const SUPABASE_URL = "https://inmshbmejdjlgqpkklwt.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_vp0Hk0XYwDHOoAVCnV57gQ_BT59_Tkf";
+import { sendWelcomeEmail } from "@/lib/directMail";
+
+export const runtime = "nodejs";
+
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 type SubscribeRequestBody = {
@@ -14,6 +16,37 @@ function jsonResponse(body: unknown, status: number) {
     headers: {
       "Cache-Control": "no-store"
     }
+  });
+}
+
+function requireEnv(name: string) {
+  const value = process.env[name];
+
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+
+  return value;
+}
+
+async function insertSubscriber(email: string, userAgent: string | null) {
+  const supabaseUrl = requireEnv("SUPABASE_URL");
+  const supabasePublishableKey = requireEnv("SUPABASE_PUBLISHABLE_KEY");
+
+  return fetch(`${supabaseUrl}/rest/v1/newsletter_subscribers`, {
+    method: "POST",
+    headers: {
+      apikey: supabasePublishableKey,
+      Authorization: `Bearer ${supabasePublishableKey}`,
+      "Content-Type": "application/json",
+      Prefer: "return=minimal"
+    },
+    body: JSON.stringify({
+      email,
+      status: "subscribed",
+      source: "homepage",
+      user_agent: userAgent
+    })
   });
 }
 
@@ -32,24 +65,23 @@ export async function POST(request: NextRequest) {
     return jsonResponse({ ok: false, message: "请输入一个有效的邮箱地址。" }, 400);
   }
 
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/newsletter_subscribers`, {
-    method: "POST",
-    headers: {
-      apikey: SUPABASE_PUBLISHABLE_KEY,
-      Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
-      "Content-Type": "application/json",
-      Prefer: "return=minimal"
-    },
-    body: JSON.stringify({
-      email,
-      status: "subscribed",
-      source: "homepage",
-      user_agent: request.headers.get("user-agent")
-    })
-  });
+  let response: Response;
+
+  try {
+    response = await insertSubscriber(email, request.headers.get("user-agent"));
+  } catch (error) {
+    console.error("Failed to connect to Supabase", error);
+    return jsonResponse({ ok: false, message: "暂时无法完成绑定，请稍后再试。" }, 502);
+  }
 
   if (response.ok) {
-    return jsonResponse({ ok: true, email }, 201);
+    try {
+      const welcomeEmail = await sendWelcomeEmail(email);
+      return jsonResponse({ ok: true, email, welcomeEmailSent: true, welcomeEmail }, 201);
+    } catch (error) {
+      console.error("Failed to send welcome email", error);
+      return jsonResponse({ ok: true, email, welcomeEmailSent: false }, 201);
+    }
   }
 
   let errorCode = "";
