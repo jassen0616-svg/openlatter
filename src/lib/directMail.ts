@@ -3,9 +3,16 @@ import { Config } from "@alicloud/openapi-client";
 
 import { createWelcomeEmailTemplate } from "./welcomeEmailTemplate";
 
-type SendWelcomeEmailResult = {
+export type SendEmailResult = {
   envId?: string;
   requestId?: string;
+};
+
+export type SendEmailInput = {
+  htmlBody?: string;
+  subject: string;
+  textBody?: string;
+  toAddress: string;
 };
 
 let cachedClient: DmClient | null = null;
@@ -55,21 +62,24 @@ function getDirectMailClient() {
   return cachedClient;
 }
 
-export async function sendWelcomeEmail(email: string): Promise<SendWelcomeEmailResult> {
-  const template = createWelcomeEmailTemplate(email);
+export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
   const fromAlias = process.env.ALIYUN_DM_FROM_ALIAS || "openlatter";
   const accountName = requireEnv("ALIYUN_DM_ACCOUNT_NAME");
+
+  if (!input.htmlBody && !input.textBody) {
+    throw new Error("Either htmlBody or textBody is required");
+  }
 
   const request = new SingleSendMailRequest({
     accountName,
     addressType: 1,
     clickTrace: "0",
     fromAlias,
-    htmlBody: template.html,
+    htmlBody: input.htmlBody,
     replyToAddress: true,
-    subject: template.subject,
-    textBody: template.text,
-    toAddress: email,
+    subject: input.subject,
+    textBody: input.textBody,
+    toAddress: input.toAddress,
     unSubscribeFilterLevel: "disabled",
     unSubscribeLinkType: "disabled"
   });
@@ -80,4 +90,15 @@ export async function sendWelcomeEmail(email: string): Promise<SendWelcomeEmailR
     envId: response.body?.envId,
     requestId: response.body?.requestId
   };
+}
+
+export async function sendWelcomeEmail(email: string): Promise<SendEmailResult> {
+  const template = createWelcomeEmailTemplate(email);
+
+  return sendEmail({
+    htmlBody: template.html,
+    subject: template.subject,
+    textBody: template.text,
+    toAddress: email
+  });
 }

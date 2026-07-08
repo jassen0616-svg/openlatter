@@ -16,6 +16,8 @@ build
 # misc
 .DS_Store
 *.pem
+public/newsletter/openlatter-daily-*.png
+!public/newsletter/openlatter-daily-default.png
 
 # logs
 npm-debug.log*

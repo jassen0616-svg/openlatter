@@ -48,13 +48,50 @@
 - 同一邮箱重复提交会被视为已订阅，不会重复创建记录。
 - 订阅成功后，前端继续沿用原有成功提示和本地 `localStorage` 状态。
 
+当前已完成的每日 newsletter 生成工作流：
+
+- 线上触发接口：`GET /api/newsletter/daily`。
+- 手动触发接口：`POST /api/newsletter/daily`。
+- 触发接口必须携带 `Authorization: Bearer <CRON_SECRET>`。
+- Vercel Cron 已配置为每天 UTC 00:00 触发，对应北京时间 08:00。
+- 信息来源参考 `zarazhangrui/follow-builders.git`，默认读取 GitHub raw feed：
+  - `feed-x.json`
+  - `feed-podcasts.json`
+  - `feed-blogs.json`
+- 正文生成使用 AI Gateway 文本模型，并要求每日只输出 3 条 AI 热点。
+- 邮件正文渲染前会做防乱码校验：
+  - newsletter content 不能出现连续 `???`。
+  - HTML 最终必须是 ASCII-only。
+  - HTML 中文必须通过实体反解检查。
+- 每篇生成出来的文章必须归档到 Supabase Storage，再进入发送步骤。
+- 默认归档 bucket：`newsletter-archives`，通过 `NEWSLETTER_ARCHIVE_BUCKET` 可覆盖。
+- 归档路径格式：
+  - `daily/YYYY/MM/DD/YYYY-MM-DD-<run-timestamp>/content.json`
+  - `daily/YYYY/MM/DD/YYYY-MM-DD-<run-timestamp>/content.md`
+  - `daily/YYYY/MM/DD/YYYY-MM-DD-<run-timestamp>/email.html`
+  - `daily/YYYY/MM/DD/YYYY-MM-DD-<run-timestamp>/metadata.json`
+- 归档 bucket 默认私有，服务端使用 `SUPABASE_SERVICE_ROLE_KEY` 写入。
+- 如果归档失败，不要继续发送邮件；避免出现“用户收到文章但后台没有存档”的状态。
+- 邮件发送使用阿里云 DirectMail。
+- 默认头图为 `https://jassen.asia/newsletter/openlatter-daily-default.png`。
+- 如果后续要每次动态生图，需要补充稳定的公开图片存储，例如 Supabase Storage、OSS 或 Vercel Blob；不要使用本地 `public/` 动态写入作为线上运行时存储。
+
+重要编码规则：
+
+- 不要用 PowerShell 管道或 `node -` stdin 传递中文内容。
+- 之前确认过：`PowerShell here-string -> node -` 会在 Windows 管道编码中把中文替换成 `?`，导致邮件正文乱码。
+- 生成中文邮件内容时，只允许使用 UTF-8 文件、项目内 TypeScript/Node 源文件，或纯 Node/TS 运行时数据流。
+- 发信前必须检查内容中没有连续 `???`，并确认 HTML 实体反解后仍能读到中文。
+
 主要目录：
 
 ```txt
 public/assets/          原始页面图片与素材
+public/newsletter/      newsletter 邮件默认头图等公开素材
 src/app/                Next.js App Router 入口、layout、globals.css
 src/components/         页面组件与少量 client 交互组件
 src/data/landing.ts     页面文案、导航、卡片、列表等结构化数据
+src/lib/dailyNewsletter.ts  每日 AI newsletter 生成、渲染和发送工作流
 ```
 
 原始设计交付物仍保留在本地根目录：
@@ -345,12 +382,26 @@ codex exec --cd "D:\项目\openlatter" --sandbox read-only "Use the configured M
 - 部署后用线上 URL 做 HTTP 200 验证。
 - 如果 Vercel CLI 生成 `.vercel/`，不要提交该目录。
 - 如果 GitHub 自动关联失败，说明账号连接问题，不代表部署失败。
+- Vercel Cron 通过 `vercel.json` 配置，当前每日北京时间 08:00 触发 `/api/newsletter/daily`。
+- Cron 接口必须校验 `CRON_SECRET`，Vercel 会把它作为 `Authorization: Bearer <CRON_SECRET>` 自动发送。
 
 ### Supabase
 
 - 优先使用配置好的 `supabase` MCP。
 - 默认先只读检查。
 - 不要把 Supabase access token、service role key、JWT secret、数据库密码写入仓库。
+- `public.newsletter_subscribers` 没有 SELECT policy；线上每日群发如果要读取订阅者列表，必须只在服务端使用 `SUPABASE_SERVICE_ROLE_KEY`。
+- 不要为了读取订阅邮箱而给 `anon` 添加公开 SELECT policy。
+- Supabase Storage 归档同样使用 `SUPABASE_SERVICE_ROLE_KEY`，不要使用 `SUPABASE_PUBLISHABLE_KEY` 写私有归档。
+- 归档 bucket 不存在时，服务端工作流会尝试创建私有 bucket；如果 service role key 缺失或权限不足，工作流应失败并停止发送。
+
+### AI Gateway
+
+- AI 文本生成通过 `src/lib/aiGateway.ts`。
+- 默认文本模型：`gpt-5.4-mini`。
+- 默认生图模型：`gemini-3.1-flash-image-preview`。
+- API Key 只能存在本地环境变量或 Vercel 环境变量中，不要写进仓库。
+- 生成 newsletter 正文后必须经过 `src/lib/emailEncoding.ts` 的防乱码校验，再进入阿里云发信流程。
 
 ### 阿里云 DNS
 
