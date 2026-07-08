@@ -427,9 +427,27 @@ codex exec --cd "D:\项目\openlatter" --sandbox read-only "Use the configured M
 ```txt
 Git branch: main
 Git remote: https://github.com/jassen0616-svg/openlatter.git
-Vercel production: https://openlatter-eight.vercel.app
+Vercel production: https://jassen.asia
+Latest deployment: https://openlatter-65ro4pven-jassen0616-8792s-projects.vercel.app
 Supabase project URL: https://inmshbmejdjlgqpkklwt.supabase.co
 Supabase subscription table: public.newsletter_subscribers
+Supabase archive bucket: newsletter-archives
 Custom domain target: jassen.asia
 Vercel custom domains added: jassen.asia only
+Daily newsletter route: /api/newsletter/daily
+Daily newsletter mode: production
+Daily newsletter cron: 0 0 * * * UTC, equivalent to 08:00 Asia/Shanghai
+Last verified subscribed count: 4
+```
+
+最近一次每日 newsletter 端到端验证：
+
+```txt
+Date: 2026-07-08
+Manual send subject: openlatter Daily 2026-07-08
+Manual send recipient: 1065974816@qq.com
+Aliyun EnvId: 600000333000326240
+Aliyun RequestId: 019F40A6-B9DC-528A-B919-C8177395C949
+Archive prefix: daily/2026/07/08/2026-07-08-2026-07-08T07-34-46-584Z
+Dry-run archive prefix: daily/2026/07/08/2026-07-08-2026-07-08T07-37-36-852Z
 ```
