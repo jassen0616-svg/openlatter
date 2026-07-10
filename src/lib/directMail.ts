@@ -1,6 +1,7 @@
 import DmClient, { SingleSendMailRequest } from "@alicloud/dm20151123";
 import { Config } from "@alicloud/openapi-client";
 
+import { createUnsubscribeUrl } from "./unsubscribe";
 import { createWelcomeEmailTemplate } from "./welcomeEmailTemplate";
 
 export type SendEmailResult = {
@@ -93,7 +94,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
 }
 
 export async function sendWelcomeEmail(email: string): Promise<SendEmailResult> {
-  const template = createWelcomeEmailTemplate(email);
+  const template = createWelcomeEmailTemplate(email, createUnsubscribeUrl(email));
 
   return sendEmail({
     htmlBody: template.html,

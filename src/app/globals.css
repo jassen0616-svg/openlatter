@@ -449,6 +449,27 @@ h1, h2, h3 { margin: 0; font-family: var(--font-display); text-wrap: balance; }
   font-size: var(--text-sm);
 }
 .pagefoot a { color: var(--fg); font-weight: 600; }
+.unsubscribe-page {
+  min-height: 100svh;
+  display: grid;
+  align-items: center;
+  background: var(--surface);
+}
+.unsubscribe-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-5);
+  padding-block: var(--section-y-desktop);
+}
+.unsubscribe-content .lead { max-width: 44ch; }
+.unsubscribe-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+.unsubscribe-actions form { margin: 0; }
 .reveal {
   opacity: 0;
   transform: translateY(18px);
@@ -481,4 +502,5 @@ h1, h2, h3 { margin: 0; font-family: var(--font-display); text-wrap: balance; }
   .floating-brief { width: 88%; bottom: var(--space-5); }
   .digest-item { grid-template-columns: 1fr; }
   .row-between { align-items: flex-start; flex-direction: column; }
+  .unsubscribe-content { padding-block: var(--section-y-phone); }
 }

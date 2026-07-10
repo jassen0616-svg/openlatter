@@ -47,6 +47,11 @@
 - 服务端接口会再次规范化并校验邮箱，然后写入 Supabase 的 `public.newsletter_subscribers` 表。
 - 同一邮箱重复提交会被视为已订阅，不会重复创建记录。
 - 订阅成功后，前端继续沿用原有成功提示和本地 `localStorage` 状态。
+- 欢迎邮件和每日 newsletter 都包含按收件人签名的取消订阅链接。
+- 邮件中的 GET 链接只打开退订确认页，不能修改订阅状态，避免企业邮箱安全扫描器访问链接时误退订。
+- 只有用户在确认页主动提交 POST 后，才会把对应记录的 `status` 更新为 `unsubscribed`；每日发送查询会自动排除该记录。
+- 已退订用户在首页重新提交同一邮箱时，会恢复为 `subscribed` 并再次收到欢迎邮件。
+- 退订成功页会清理当前浏览器中的订阅 `localStorage`，避免首页继续显示已绑定状态。
 
 当前已完成的每日 newsletter 生成工作流：
 
@@ -73,8 +78,11 @@
 - 归档 bucket 默认私有，服务端使用 `SUPABASE_SERVICE_ROLE_KEY` 写入。
 - 如果归档失败，不要继续发送邮件；避免出现“用户收到文章但后台没有存档”的状态。
 - 邮件发送使用阿里云 DirectMail。
-- 默认头图为 `https://jassen.asia/newsletter/openlatter-daily-default.png`。
-- 如果后续要每次动态生图，需要补充稳定的公开图片存储，例如 Supabase Storage、OSS 或 Vercel Blob；不要使用本地 `public/` 动态写入作为线上运行时存储。
+- 每日 newsletter 默认会调用 AI Gateway 生成头图。
+- 生成后的头图会上传到 Supabase Storage 的公开 bucket，再把公开 URL 写入邮件 HTML。
+- 默认图片 bucket：`newsletter-images`，通过 `NEWSLETTER_IMAGE_BUCKET` 可覆盖。
+- 默认头图 `https://jassen.asia/newsletter/openlatter-daily-default.png` 只作为生图或上传失败时的回退图。
+- 如需临时禁用每日生图，可设置 `NEWSLETTER_DISABLE_IMAGE_GENERATION=true`。
 
 重要编码规则：
 
@@ -392,8 +400,11 @@ codex exec --cd "D:\项目\openlatter" --sandbox read-only "Use the configured M
 - 不要把 Supabase access token、service role key、JWT secret、数据库密码写入仓库。
 - `public.newsletter_subscribers` 没有 SELECT policy；线上每日群发如果要读取订阅者列表，必须只在服务端使用 `SUPABASE_SERVICE_ROLE_KEY`。
 - 不要为了读取订阅邮箱而给 `anon` 添加公开 SELECT policy。
+- 退订接口必须保持 GET 无副作用；只有带有效签名的 POST 请求可以修改订阅状态。
 - Supabase Storage 归档同样使用 `SUPABASE_SERVICE_ROLE_KEY`，不要使用 `SUPABASE_PUBLISHABLE_KEY` 写私有归档。
 - 归档 bucket 不存在时，服务端工作流会尝试创建私有 bucket；如果 service role key 缺失或权限不足，工作流应失败并停止发送。
+- 每日 newsletter 生成头图使用 `newsletter-images` bucket。该 bucket 必须是 public，因为邮件客户端需要直接加载图片 URL。
+- 头图 bucket 只存放已生成的 newsletter 图片，不要存放密钥、用户邮箱列表或私有归档内容。
 
 ### AI Gateway
 
@@ -401,6 +412,7 @@ codex exec --cd "D:\项目\openlatter" --sandbox read-only "Use the configured M
 - 默认文本模型：`gpt-5.4-mini`。
 - 默认生图模型：`gemini-3.1-flash-image-preview`。
 - API Key 只能存在本地环境变量或 Vercel 环境变量中，不要写进仓库。
+- 每日 newsletter 默认会生图；只有设置 `NEWSLETTER_DISABLE_IMAGE_GENERATION=true` 才禁用。
 - 生成 newsletter 正文后必须经过 `src/lib/emailEncoding.ts` 的防乱码校验，再进入阿里云发信流程。
 
 ### 阿里云 DNS
@@ -432,6 +444,7 @@ Latest deployment: https://openlatter-65ro4pven-jassen0616-8792s-projects.vercel
 Supabase project URL: https://inmshbmejdjlgqpkklwt.supabase.co
 Supabase subscription table: public.newsletter_subscribers
 Supabase archive bucket: newsletter-archives
+Supabase newsletter image bucket: newsletter-images
 Custom domain target: jassen.asia
 Vercel custom domains added: jassen.asia only
 Daily newsletter route: /api/newsletter/daily

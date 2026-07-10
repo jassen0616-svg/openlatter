@@ -14,8 +14,12 @@ function escapeHtml(value: string) {
     .replace(/"/g, "&quot;");
 }
 
-export function createWelcomeEmailTemplate(email: string): WelcomeEmailTemplate {
+export function createWelcomeEmailTemplate(
+  email: string,
+  unsubscribeUrl: string
+): WelcomeEmailTemplate {
   const safeEmail = escapeHtml(email);
+  const safeUnsubscribeUrl = escapeHtml(unsubscribeUrl);
   const subject = "欢迎订阅 openlatter";
 
   const html = `<!doctype html>
@@ -55,7 +59,7 @@ export function createWelcomeEmailTemplate(email: string): WelcomeEmailTemplate 
                 <div style="background:#f3eadb;border:1px solid #e0d1bb;border-radius:12px;padding:18px 20px;">
                   <p style="margin:0;font-size:15px;color:#2d2923;">如果想一起学习探讨 AI 的话，欢迎加我的微信：<strong>${contactWechat}</strong></p>
                 </div>
-                <p style="margin:24px 0 0;font-size:13px;color:#8b8173;">如果这不是你本人订阅，可以忽略这封邮件。</p>
+                <p style="margin:24px 0 0;font-size:13px;color:#8b8173;">如果这不是你本人订阅，或不想继续接收 openlatter，可以<a href="${safeUnsubscribeUrl}" style="color:#6f5635;text-decoration:underline;">取消订阅</a>。</p>
               </td>
             </tr>
           </table>
@@ -78,7 +82,8 @@ export function createWelcomeEmailTemplate(email: string): WelcomeEmailTemplate 
 
 如果想一起学习探讨 AI 的话，欢迎加我的微信：${contactWechat}
 
-如果这不是你本人订阅，可以忽略这封邮件。`;
+如果这不是你本人订阅，或不想继续接收 openlatter，可以取消订阅：
+${unsubscribeUrl}`;
 
   return { subject, html, text };
 }

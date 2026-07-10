@@ -10,6 +10,8 @@ import {
   escapeHtml
 } from "@/lib/emailEncoding";
 import { archiveNewsletter, type NewsletterArchiveResult } from "@/lib/newsletterArchive";
+import { storeNewsletterImage, type StoredNewsletterImage } from "@/lib/newsletterImageStorage";
+import { createUnsubscribeUrl } from "@/lib/unsubscribe";
 
 type XTweet = {
   createdAt?: string;
@@ -90,6 +92,13 @@ export type DailyNewsletterEmail = {
   subject: string;
 };
 
+type ResolvedNewsletterImage = {
+  fallbackReason?: string;
+  generated: boolean;
+  storage?: StoredNewsletterImage;
+  url: string;
+};
+
 export type DailyNewsletterRunOptions = {
   date?: Date;
   dryRun?: boolean;
@@ -104,6 +113,11 @@ export type DailyNewsletterRunResult = {
     htmlBytes: number;
     imageUrl: string;
     subject: string;
+  };
+  image: {
+    fallbackReason?: string;
+    generated: boolean;
+    storage?: StoredNewsletterImage;
   };
   feed: {
     blogsGeneratedAt?: string;
@@ -398,24 +412,44 @@ Composition: three loose AI news slips enter a strange low-tech mailroom machine
 Constraints: 16:9, pure white, no top-left title, no PPT look, no dense diagram, no cute mascot poster, at most 5 short Chinese labels.`;
 }
 
-async function resolveImageUrl(content: DailyNewsletterContent) {
-  if (process.env.NEWSLETTER_GENERATE_IMAGE === "true") {
+async function resolveNewsletterImage(content: DailyNewsletterContent) {
+  const defaultImageUrl =
+    process.env.NEWSLETTER_DEFAULT_IMAGE_URL ||
+    "https://jassen.asia/newsletter/openlatter-daily-default.png";
+
+  if (process.env.NEWSLETTER_DISABLE_IMAGE_GENERATION === "true") {
+    return {
+      fallbackReason: "Image generation disabled by NEWSLETTER_DISABLE_IMAGE_GENERATION",
+      generated: false,
+      url: defaultImageUrl
+    } satisfies ResolvedNewsletterImage;
+  }
+
+  try {
     const image = await generateImage({
       prompt: createImagePrompt(content),
-      responseFormat: "url",
+      responseFormat: "b64_json",
       size: "1024x576",
       timeoutMs: 180000
     });
+    const storedImage = await storeNewsletterImage(content.date, image);
 
-    if (image.url) {
-      return image.url;
-    }
+    return {
+      generated: true,
+      storage: storedImage,
+      url: storedImage.publicUrl
+    } satisfies ResolvedNewsletterImage;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown image generation error";
+
+    console.error("Daily newsletter image generation failed; using fallback image", error);
+
+    return {
+      fallbackReason: message,
+      generated: false,
+      url: defaultImageUrl
+    } satisfies ResolvedNewsletterImage;
   }
-
-  return (
-    process.env.NEWSLETTER_DEFAULT_IMAGE_URL ||
-    "https://jassen.asia/newsletter/openlatter-daily-default.png"
-  );
 }
 
 function paragraph(text: string) {
@@ -428,8 +462,15 @@ function link(url: string) {
   return `<a href="${safeUrl}" style="color:#7b4b18;text-decoration:underline;word-break:break-all;">${safeUrl}</a>`;
 }
 
-export function renderDailyNewsletterEmail(content: DailyNewsletterContent, imageUrl: string): DailyNewsletterEmail {
+export function renderDailyNewsletterEmail(
+  content: DailyNewsletterContent,
+  imageUrl: string,
+  unsubscribeUrl?: string
+): DailyNewsletterEmail {
   const subject = `openlatter Daily ${content.date}`;
+  const unsubscribeHtml = unsubscribeUrl
+    ? `<p style="margin:10px 0 0;font-size:12px;line-height:1.6;color:#8a7b69;">${encodeHtmlEntities("不想继续接收 openlatter？")}<a href="${escapeHtml(unsubscribeUrl)}" style="color:#6f5635;text-decoration:underline;">${encodeHtmlEntities("取消订阅")}</a></p>`
+    : "";
   const hotspotHtml = content.hotspots
     .map(
       (item, index) => `
@@ -487,6 +528,7 @@ export function renderDailyNewsletterEmail(content: DailyNewsletterContent, imag
                     <p style="margin:0;font-size:15px;line-height:1.7;color:#fffdf8;">${encodeHtmlEntities("如果想一起学习探讨 AI，欢迎加我的微信：18834032600")}</p>
                   </div>
                   <p style="margin:22px 0 0;font-size:12px;line-height:1.6;color:#8a7b69;">${encodeHtmlEntities("这是一封 openlatter 每日 AI 资讯邮件。")}</p>
+                  ${unsubscribeHtml}
                 </div>
               </td>
             </tr>
@@ -606,8 +648,8 @@ export async function runDailyNewsletterWorkflow(
 
   const recipients = await resolveRecipients(options.recipients);
   const content = await generateDailyNewsletterContent(candidates, date);
-  const imageUrl = await resolveImageUrl(content);
-  const email = renderDailyNewsletterEmail(content, imageUrl);
+  const image = await resolveNewsletterImage(content);
+  const email = renderDailyNewsletterEmail(content, image.url);
   const markdown = renderDailyNewsletterMarkdown(content);
   const archive = await archiveNewsletter({
     date,
@@ -637,6 +679,11 @@ export async function runDailyNewsletterWorkflow(
         imageUrl: email.imageUrl,
         subject: email.subject
       },
+      image: {
+        fallbackReason: image.fallbackReason,
+        generated: image.generated,
+        storage: image.storage
+      },
       feed: {
         blogsGeneratedAt: blogFeed.generatedAt,
         podcastsGeneratedAt: podcastFeed.generatedAt,
@@ -651,9 +698,14 @@ export async function runDailyNewsletterWorkflow(
 
   if (!dryRun) {
     for (const recipient of recipients) {
+      const personalizedEmail = renderDailyNewsletterEmail(
+        content,
+        image.url,
+        createUnsubscribeUrl(recipient)
+      );
       const result = await sendEmail({
-        htmlBody: email.html,
-        subject: email.subject,
+        htmlBody: personalizedEmail.html,
+        subject: personalizedEmail.subject,
         toAddress: recipient
       });
       sent.push({ email: recipient, result });
@@ -667,6 +719,11 @@ export async function runDailyNewsletterWorkflow(
       htmlBytes: Buffer.byteLength(email.html),
       imageUrl: email.imageUrl,
       subject: email.subject
+    },
+    image: {
+      fallbackReason: image.fallbackReason,
+      generated: image.generated,
+      storage: image.storage
     },
     feed: {
       blogsGeneratedAt: blogFeed.generatedAt,
