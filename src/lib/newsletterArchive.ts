@@ -136,3 +136,24 @@ export async function archiveNewsletter(input: NewsletterArchiveInput): Promise<
 
   return { bucket, generatedAt, objects, prefix };
 }
+
+export async function writeNewsletterArchiveJson(
+  archive: Pick<NewsletterArchiveResult, "bucket" | "prefix">,
+  name: string,
+  value: unknown
+) {
+  if (!/^[a-z0-9-]+$/i.test(name)) {
+    throw new Error("Archive JSON object name contains unsupported characters");
+  }
+
+  const path = `${archive.prefix}/${name}.json`;
+
+  await uploadArchiveObject(
+    archive.bucket,
+    path,
+    JSON.stringify(value, null, 2),
+    "application/json"
+  );
+
+  return path;
+}

@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { runDailyNewsletterWorkflow } from "@/lib/dailyNewsletter";
+import {
+  runDailyNewsletterWorkflow,
+  type DailyNewsletterContentSource
+} from "@/lib/dailyNewsletter";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 export const runtime = "nodejs";
 
 type DailyNewsletterRequestBody = {
+  contentSource?: unknown;
   dryRun?: unknown;
   recipients?: unknown;
 };
@@ -35,13 +39,29 @@ function parseRecipients(value: unknown) {
   return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
 }
 
-async function run(request: NextRequest, options: { dryRun?: boolean; recipients?: string[] }) {
+function parseContentSource(value: unknown): DailyNewsletterContentSource | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === "ai-gateway" || value === "ai-hot") {
+    return value;
+  }
+
+  return undefined;
+}
+
+async function run(
+  request: NextRequest,
+  options: { contentSource?: DailyNewsletterContentSource; dryRun?: boolean; recipients?: string[] }
+) {
   if (!isAuthorized(request)) {
     return jsonResponse({ ok: false, message: "Unauthorized" }, 401);
   }
 
   try {
     const result = await runDailyNewsletterWorkflow({
+      contentSource: options.contentSource,
       dryRun: options.dryRun,
       recipients: options.recipients,
       source: request.method === "GET" ? "cron" : "manual"
@@ -76,7 +96,14 @@ export async function POST(request: NextRequest) {
     body = {};
   }
 
+  const contentSource = parseContentSource(body.contentSource);
+
+  if (body.contentSource !== undefined && contentSource === undefined) {
+    return jsonResponse({ ok: false, message: "Invalid contentSource" }, 400);
+  }
+
   return run(request, {
+    contentSource,
     dryRun: body.dryRun === true,
     recipients: parseRecipients(body.recipients)
   });

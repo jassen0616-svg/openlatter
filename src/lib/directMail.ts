@@ -1,5 +1,6 @@
 import DmClient, { SingleSendMailRequest } from "@alicloud/dm20151123";
 import { Config } from "@alicloud/openapi-client";
+import { RuntimeOptions } from "@alicloud/tea-util";
 
 import { createUnsubscribeUrl } from "./unsubscribe";
 import { createWelcomeEmailTemplate } from "./welcomeEmailTemplate";
@@ -17,6 +18,9 @@ export type SendEmailInput = {
 };
 
 let cachedClient: DmClient | null = null;
+
+const DIRECT_MAIL_CONNECT_TIMEOUT_MS = 5_000;
+const DIRECT_MAIL_READ_TIMEOUT_MS = 10_000;
 
 function requireEnv(name: string) {
   const value = process.env[name];
@@ -85,7 +89,15 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
     unSubscribeLinkType: "disabled"
   });
 
-  const response = await getDirectMailClient().singleSendMail(request);
+  const response = await getDirectMailClient().singleSendMailWithOptions(
+    request,
+    new RuntimeOptions({
+      autoretry: false,
+      connectTimeout: DIRECT_MAIL_CONNECT_TIMEOUT_MS,
+      maxAttempts: 1,
+      readTimeout: DIRECT_MAIL_READ_TIMEOUT_MS
+    })
+  );
 
   return {
     envId: response.body?.envId,

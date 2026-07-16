@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createClient } from "@supabase/supabase-js";
+import sharp from "sharp";
 
 import type { GeneratedImage } from "@/lib/aiGateway";
 
@@ -25,6 +26,8 @@ type SupabaseAdminClient = ReturnType<typeof createSupabaseAdminClient>;
 const DEFAULT_IMAGE_BUCKET = "newsletter-images";
 const IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"];
 const MAX_IMAGE_SIZE_BYTES = 8 * 1024 * 1024;
+const NEWSLETTER_IMAGE_HEIGHT = 576;
+const NEWSLETTER_IMAGE_WIDTH = 1024;
 
 function requireEnv(name: string) {
   const value = process.env[name];
@@ -181,6 +184,32 @@ async function readGeneratedImage(image: GeneratedImage) {
   throw new Error("Generated newsletter image has no usable payload");
 }
 
+async function normalizeNewsletterImage(payload: ImagePayload): Promise<ImagePayload> {
+  try {
+    const bytes = await sharp(payload.bytes, { failOn: "error" })
+      .rotate()
+      .resize(NEWSLETTER_IMAGE_WIDTH, NEWSLETTER_IMAGE_HEIGHT, {
+        background: "#ffffff",
+        fit: "cover",
+        position: "centre"
+      })
+      .jpeg({ quality: 90 })
+      .toBuffer();
+
+    assertImageSize(bytes);
+
+    return {
+      bytes,
+      contentType: "image/jpeg",
+      source: payload.source
+    };
+  } catch (error) {
+    throw new Error(
+      `Failed to normalize generated newsletter image: ${error instanceof Error ? error.message : "unknown error"}`
+    );
+  }
+}
+
 function createImagePath(date: string, generatedAt: string, extension: string) {
   const [year, month, day] = date.split("-");
   const stamp = generatedAt.replace(/[:.]/g, "-");
@@ -193,7 +222,7 @@ function toBlobPart(bytes: Buffer) {
 }
 
 export async function storeNewsletterImage(date: string, image: GeneratedImage): Promise<StoredNewsletterImage> {
-  const payload = await readGeneratedImage(image);
+  const payload = await normalizeNewsletterImage(await readGeneratedImage(image));
   const bucket = getImageBucket();
   const generatedAt = new Date().toISOString();
   const path = createImagePath(date, generatedAt, extensionForContentType(payload.contentType));

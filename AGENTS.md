@@ -40,6 +40,23 @@
 
 不要在没有明确需求时把产品扩展成泛内容社区、登录型 SaaS、博客系统或复杂仪表盘。
 
+## 长期 AI-native 产品方向
+
+`openlatter` 当前是“AI-native 内容生产型 newsletter”：AI 已经参与选题、编辑框架、作者判断和头图，但读者端仍是统一内容的邮箱订阅体验。后续迭代方向已经确认，不以增加聊天框为目标，而是逐步形成下面的数据与产品闭环：
+
+```txt
+读者偏好与阅读行为 -> AI 选题和排序 -> 个性化邮件 -> 打开与点击反馈 -> 下一期内容调整
+```
+
+长期原则：
+
+- 保留作者的个人观点、产品判断和内容取舍，AI 用于放大作者方法，不把产品变成无差别资讯聚合器。
+- 从统一作者型日报渐进到个性化智能资讯服务，不一次性改变当前简单的订阅体验。
+- 个性化应优先服务内容相关性、阅读负担和行动价值，而不是追求聊天式交互。
+- 后续可逐步引入读者主题偏好、打开与点击信号、内容排序和发送时机优化。
+- 建立行为反馈闭环时必须说明数据用途、控制采集范围，并为读者保留退出和取消订阅能力。
+- 当前阶段先保证每日生成、归档、发送和退订链路稳定，再扩展个性化能力。
+
 当前已完成的第一个业务功能：
 
 - 首页邮箱表单会先校验邮箱格式。
@@ -59,11 +76,13 @@
 - 手动触发接口：`POST /api/newsletter/daily`。
 - 触发接口必须携带 `Authorization: Bearer <CRON_SECRET>`。
 - Vercel Cron 已配置为每天 UTC 00:00 触发，对应北京时间 08:00。
-- 信息来源参考 `zarazhangrui/follow-builders.git`，默认读取 GitHub raw feed：
-  - `feed-x.json`
-  - `feed-podcasts.json`
-  - `feed-blogs.json`
-- 正文生成使用 AI Gateway 文本模型，并要求每日只输出 3 条 AI 热点。
+- 默认信息来源为 AI HOT 公开日报接口，每天固定选取 5 条热点。
+- 5 条热点的标题和摘要直接使用 AI HOT 日报原文，不交给模型改写。
+- AI Gateway 只生成整封邮件的标题、导语、预览文案、头图概念和末尾一次“我的判断”。
+- 每条热点下方不生成单独判断；整封邮件只在末尾显示一次总结判断。
+- 每条热点的来源使用 `网页一`、`网页二`、`网页三` 等通用可点击标签，不在正文中裸露长 URL。
+- 邮件页脚保留 AI HOT 来源署名和日报链接。
+- 原 Follow Builders + AI Gateway 工作流仍保留为显式兼容路径；手动 POST 时可传 `contentSource: "ai-gateway"`，但 Cron 和未指定来源的调用默认使用 `ai-hot`。
 - 邮件正文渲染前会做防乱码校验：
   - newsletter content 不能出现连续 `???`。
   - HTML 最终必须是 ASCII-only。
@@ -83,6 +102,10 @@
 - 默认图片 bucket：`newsletter-images`，通过 `NEWSLETTER_IMAGE_BUCKET` 可覆盖。
 - 默认头图 `https://jassen.asia/newsletter/openlatter-daily-default.png` 只作为生图或上传失败时的回退图。
 - 如需临时禁用每日生图，可设置 `NEWSLETTER_DISABLE_IMAGE_GENERATION=true`。
+- 每次 AI 文本生成尝试最多等待 45 秒；每日头图最多使用 60 秒，并受工作流发送前总预算约束。
+- 如果头图预算不足或生成失败，必须使用默认头图继续发送，不能让图片阻塞整封日报。
+- 阿里云单封请求设置连接和读取超时，避免某一个收件人长期占用 Vercel Function。
+- 非 dry-run 每次归档目录都会维护 `delivery.json`，逐个记录 `pending`、`accepted` 或 `failed`，用于在 Vercel 短期日志过期后继续审计发送结果。
 
 重要编码规则：
 
@@ -212,19 +235,19 @@ npm run build
 当前线上地址：
 
 ```txt
-https://openlatter-eight.vercel.app
+https://jassen.asia
 ```
 
 最近一次部署地址：
 
 ```txt
-https://openlatter-qmlhsr2pv-jassen0616-8792s-projects.vercel.app
+https://openlatter-j82u3tfu6-jassen0616-8792s-projects.vercel.app
 ```
 
 最近一次 Vercel Inspect：
 
 ```txt
-https://vercel.com/jassen0616-8792s-projects/openlatter/C9QtKfwU8Ah4R4XjuLk7fgq6W7Vi
+https://vercel.com/jassen0616-8792s-projects/openlatter/46euSznqQxTgAeQ12aWUDq969RBU
 ```
 
 重要状态：
@@ -437,10 +460,10 @@ codex exec --cd "D:\项目\openlatter" --sandbox read-only "Use the configured M
 最后确认过的状态：
 
 ```txt
-Git branch: main
+Git branch: codex/confirm-unsubscribe
 Git remote: https://github.com/jassen0616-svg/openlatter.git
 Vercel production: https://jassen.asia
-Latest deployment: https://openlatter-65ro4pven-jassen0616-8792s-projects.vercel.app
+Latest deployment: https://openlatter-j82u3tfu6-jassen0616-8792s-projects.vercel.app
 Supabase project URL: https://inmshbmejdjlgqpkklwt.supabase.co
 Supabase subscription table: public.newsletter_subscribers
 Supabase archive bucket: newsletter-archives
@@ -449,9 +472,38 @@ Custom domain target: jassen.asia
 Vercel custom domains added: jassen.asia only
 Daily newsletter route: /api/newsletter/daily
 Daily newsletter mode: production
+Daily newsletter default content source: ai-hot (5 AI HOT items + AI Gateway editorial framing)
 Daily newsletter cron: 0 0 * * * UTC, equivalent to 08:00 Asia/Shanghai
-Last verified subscribed count: 4
+Last verified subscribed count: 5
 ```
+
+最近一次生产环境默认工作流验证：
+
+```txt
+Date: 2026-07-16
+Deployment ID: dpl_46euSznqQxTgAeQ12aWUDq969RBU
+Mode: production GET /api/newsletter/daily (manual recovery of the scheduled edition)
+Source: cron
+Content source: ai-hot
+Selected AI HOT items: 5
+Email subject: openlatter AI 日报 2026-07-16
+Workflow duration: about 45 seconds
+Image generated: true
+Emails accepted: 5
+Emails failed: 0
+Aliyun delivery result: 5 x SendOk / 250 Send Mail OK
+Archive prefix: daily/2026/07/16/2026-07-16-2026-07-16T06-25-30-205Z
+Delivery report: daily/2026/07/16/2026-07-16-2026-07-16T06-25-30-205Z/delivery.json
+```
+
+2026-07-16 定时发送故障记录：
+
+- 当天定时执行已经完成 AI HOT、AI Gateway、头图上传和 Supabase 归档，但归档后没有任何请求进入阿里云 DirectMail。
+- 旧实现允许 AI 文本两次各等待 120 秒、头图等待 180 秒，理论等待时间达到 420 秒，超过路由 `maxDuration = 300` 秒，且还未计入抓取、存储与发信。
+- 结合“归档成功、第一封 DirectMail 请求不存在”的证据，根因判定为同步工作流耗尽 Vercel Function 时限后在发信前被终止。
+- 已把 AI 文本单次等待收紧到 45 秒，头图最多 60 秒，并设置 180 秒发送前预算；图片超时使用默认图继续发信。
+- 阿里云单封调用增加连接与读取超时；发送结果写入私有 `delivery.json`。
+- Vercel Cron 失败不会自动重试；当天缺失日报已在修复部署后手动补发并验证 5/5 成功。
 
 最近一次每日 newsletter 端到端验证：
 
