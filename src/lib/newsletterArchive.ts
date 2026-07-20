@@ -25,6 +25,18 @@ export type NewsletterArchiveResult = {
   prefix: string;
 };
 
+export type CompletedNewsletterDelivery = {
+  completedAt?: string;
+  path: string;
+  prefix: string;
+  recipients: number;
+};
+
+export type NewsletterDeliveryRecoveryState = {
+  acceptedEmails: string[];
+  completedDelivery: CompletedNewsletterDelivery | null;
+};
+
 const DEFAULT_ARCHIVE_BUCKET = "newsletter-archives";
 
 function requireEnv(name: string) {
@@ -156,4 +168,87 @@ export async function writeNewsletterArchiveJson(
   );
 
   return path;
+}
+
+export async function findNewsletterDeliveryRecoveryState(
+  date: string
+): Promise<NewsletterDeliveryRecoveryState> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error("Newsletter delivery lookup date is invalid");
+  }
+
+  const [year, month, day] = date.split("-");
+  const datePrefix = `daily/${year}/${month}/${day}`;
+  const bucket = getArchiveBucket();
+  const supabase = await ensureArchiveBucket(bucket);
+  const { data: runs, error: listError } = await supabase.storage.from(bucket).list(datePrefix, {
+    limit: 100,
+    sortBy: { column: "name", order: "desc" }
+  });
+
+  if (listError) {
+    throw new Error(`Failed to list newsletter delivery archives: ${listError.message}`);
+  }
+
+  const acceptedEmails = new Set<string>();
+  let completedDelivery: CompletedNewsletterDelivery | null = null;
+
+  for (const run of runs || []) {
+    if (!run.name || run.metadata) {
+      continue;
+    }
+
+    const prefix = `${datePrefix}/${run.name}`;
+    const path = `${prefix}/delivery.json`;
+    const { data, error } = await supabase.storage.from(bucket).download(path);
+
+    if (error) {
+      if (isNotFoundError(error)) {
+        continue;
+      }
+
+      throw new Error(`Failed to read newsletter delivery archive ${path}: ${error.message}`);
+    }
+
+    try {
+      const report = JSON.parse(await data.text()) as {
+        completedAt?: unknown;
+        recipients?: Array<{ email?: unknown; status?: unknown }>;
+        status?: unknown;
+      };
+      const recipients = Array.isArray(report.recipients) ? report.recipients : [];
+
+      for (const recipient of recipients) {
+        if (recipient.status !== "accepted" || typeof recipient.email !== "string") {
+          continue;
+        }
+
+        const email = recipient.email.trim().toLowerCase();
+
+        if (email) {
+          acceptedEmails.add(email);
+        }
+      }
+
+      const allAccepted = recipients.length > 0 && recipients.every(
+        (recipient) => recipient.status === "accepted"
+      );
+
+      if (!completedDelivery && report.status === "completed" && allAccepted) {
+        completedDelivery = {
+          completedAt: typeof report.completedAt === "string" ? report.completedAt : undefined,
+          path,
+          prefix,
+          recipients: recipients.length
+        };
+      }
+    } catch (error) {
+      console.warn(`Ignoring malformed newsletter delivery archive ${path}`, error);
+    }
+  }
+
+  return {
+    acceptedEmails: Array.from(acceptedEmails),
+    completedDelivery
+  };
 }

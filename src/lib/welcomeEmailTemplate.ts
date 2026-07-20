@@ -4,8 +4,6 @@ export type WelcomeEmailTemplate = {
   text: string;
 };
 
-const contactWechat = "18834032600";
-
 function escapeHtml(value: string) {
   return value
     .replace(/&/g, "&amp;")
@@ -56,10 +54,7 @@ export function createWelcomeEmailTemplate(
             </tr>
             <tr>
               <td style="padding:0 32px 32px;">
-                <div style="background:#f3eadb;border:1px solid #e0d1bb;border-radius:12px;padding:18px 20px;">
-                  <p style="margin:0;font-size:15px;color:#2d2923;">如果想一起学习探讨 AI 的话，欢迎加我的微信：<strong>${contactWechat}</strong></p>
-                </div>
-                <p style="margin:24px 0 0;font-size:13px;color:#8b8173;">如果这不是你本人订阅，或不想继续接收 openlatter，可以<a href="${safeUnsubscribeUrl}" style="color:#6f5635;text-decoration:underline;">取消订阅</a>。</p>
+                <p style="margin:0;font-size:13px;color:#8b8173;">如果这不是你本人订阅，或不想继续接收 openlatter，可以<a href="${safeUnsubscribeUrl}" style="color:#6f5635;text-decoration:underline;">取消订阅</a>。</p>
               </td>
             </tr>
           </table>
@@ -79,8 +74,6 @@ export function createWelcomeEmailTemplate(
 1. 每天留意邮箱中的 openlatter 更新。
 2. 快速浏览 AI 新闻摘要，优先看与你工作、产品和学习相关的部分。
 3. 重点阅读观点和行动建议，把信息转成可执行的判断。
-
-如果想一起学习探讨 AI 的话，欢迎加我的微信：${contactWechat}
 
 如果这不是你本人订阅，或不想继续接收 openlatter，可以取消订阅：
 ${unsubscribeUrl}`;

@@ -11,6 +11,7 @@ export type SendEmailResult = {
 };
 
 export type SendEmailInput = {
+  accountName?: string;
   htmlBody?: string;
   subject: string;
   textBody?: string;
@@ -69,7 +70,7 @@ function getDirectMailClient() {
 
 export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
   const fromAlias = process.env.ALIYUN_DM_FROM_ALIAS || "openlatter";
-  const accountName = requireEnv("ALIYUN_DM_ACCOUNT_NAME");
+  const accountName = input.accountName || requireEnv("ALIYUN_DM_ACCOUNT_NAME");
 
   if (!input.htmlBody && !input.textBody) {
     throw new Error("Either htmlBody or textBody is required");
@@ -105,8 +106,13 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
   };
 }
 
+export function isDirectMailSpamRejection(error: unknown) {
+  return error instanceof Error && /InvalidSendMail\.Spam/i.test(error.message);
+}
+
 export async function sendWelcomeEmail(email: string): Promise<SendEmailResult> {
-  const template = createWelcomeEmailTemplate(email, createUnsubscribeUrl(email));
+  const unsubscribeUrl = createUnsubscribeUrl(email);
+  const template = createWelcomeEmailTemplate(email, unsubscribeUrl);
 
   return sendEmail({
     htmlBody: template.html,

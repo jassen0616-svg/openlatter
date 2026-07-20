@@ -6,7 +6,11 @@ import {
   type AiHotDailyMetadata,
   type AiHotDailySourceItem
 } from "@/lib/aiHotDaily";
-import { sendEmail, type SendEmailResult } from "@/lib/directMail";
+import {
+  isDirectMailSpamRejection,
+  sendEmail,
+  type SendEmailResult
+} from "@/lib/directMail";
 import {
   assertAsciiOnly,
   assertNoQuestionMarkMojibake,
@@ -122,7 +126,7 @@ export type DailyNewsletterRunOptions = {
   date?: Date;
   dryRun?: boolean;
   recipients?: string[];
-  source?: "cron" | "manual";
+  source?: "cron" | "manual" | "recovery";
 };
 
 export type DailyNewsletterRunResult = {
@@ -130,6 +134,7 @@ export type DailyNewsletterRunResult = {
   archive: NewsletterArchiveResult;
   contentSource: DailyNewsletterContentSource;
   delivery: {
+    fallbackAccepted: number;
     failed: number;
     path?: string;
     status: "completed" | "dry-run";
@@ -156,7 +161,7 @@ export type DailyNewsletterRunResult = {
     email: string;
     result: SendEmailResult;
   }>;
-  source: "cron" | "manual";
+  source: "cron" | "manual" | "recovery";
   title: string;
 };
 
@@ -165,13 +170,18 @@ type NewsletterDeliveryRecipient = {
   email: string;
   envId?: string;
   error?: string;
+  fallbackReason?: string;
   requestId?: string;
   status: "accepted" | "failed" | "pending";
+  subject?: string;
   updatedAt?: string;
+  variant?: "full" | "headlines-only";
 };
 
 type NewsletterDeliveryReport = {
   completedAt?: string;
+  fallbackActivatedAt?: string;
+  fallbackReason?: string;
   recipients: NewsletterDeliveryRecipient[];
   startedAt: string;
   status: "completed" | "partial_failure" | "sending";
@@ -570,27 +580,55 @@ async function generateAiHotNewsletterContent(
   let lastError: unknown;
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const response = await generateText({
-      maxTokens: 2200,
-      messages: [
-        { content: systemPrompt, role: "system" },
-        { content: userPrompt, role: "user" }
-      ],
-      temperature: attempt === 0 ? 0.35 : 0.1,
-      timeoutMs: AI_TEXT_ATTEMPT_TIMEOUT_MS
-    });
-
     try {
+      const response = await generateText({
+        maxTokens: 2200,
+        messages: [
+          { content: systemPrompt, role: "system" },
+          { content: userPrompt, role: "user" }
+        ],
+        temperature: attempt === 0 ? 0.35 : 0.1,
+        timeoutMs: AI_TEXT_ATTEMPT_TIMEOUT_MS
+      });
+
       return normalizeAiHotEditorial(extractJsonObject(response), items, metadata);
     } catch (error) {
       lastError = error;
-      console.warn(`AI HOT editorial attempt ${attempt + 1} failed validation`, error);
+      console.warn(`AI HOT editorial attempt ${attempt + 1} failed`, error);
     }
   }
 
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("AI HOT editorial generation failed validation twice");
+  console.error("AI HOT editorial generation exhausted; using deterministic fallback", lastError);
+
+  const sectionLabels = Array.from(new Set(items.map((item) => item.label).filter(Boolean)));
+  const title = `${metadata.date} AI 动态：5 条值得关注的变化`;
+  const content: DailyNewsletterContent = {
+    attribution: {
+      label: "AI HOT",
+      url: metadata.canonical
+    },
+    date: metadata.date,
+    editionLabel: "openlatter Daily",
+    hotspots: items.map((item) => ({
+      body: [item.summary],
+      headline: item.title,
+      sources: item.urls
+    })),
+    imageConcept: "Five distinct technology objects arranged as a calm editorial timeline while Xiaohei compares their practical impact",
+    intro: [
+      `今天选出的 5 条动态覆盖${sectionLabels.join("、") || "模型、产品与行业进展"}，先看事实，再判断它们对实际使用意味着什么。`
+    ],
+    preheader: `${metadata.date} 的 5 条 AI 动态与产品观察。`,
+    takeaway: [
+      "这些变化需要放回真实工作流里判断：优先关注能否稳定部署、持续使用并减少具体摩擦，而不只看发布时的能力描述。"
+    ],
+    takeawayTitle: "我的判断",
+    title
+  };
+
+  assertNoQuestionMarkMojibake(JSON.stringify(content), "AI HOT deterministic editorial fallback");
+
+  return content;
 }
 
 function createImagePrompt(content: DailyNewsletterContent) {
@@ -706,8 +744,9 @@ export function renderDailyNewsletterEmail(
         <div style="margin-top:18px;background:#f6efe2;border:1px solid #e5d7c2;border-radius:10px;padding:14px 16px;">
           <div style="font-size:14px;color:#6f5b3d;margin-bottom:8px;">${encodeHtmlEntities("来源：")}</div>
           <ul style="margin:0;padding-left:20px;">
-            ${item.sources
-              .map(
+          ${item.sources
+            .slice(0, 1)
+            .map(
                 (source, sourceIndex) =>
                   `<li style="font-size:13px;line-height:1.65;margin:0 0 4px;">${link(source, sourceLabel(sourceIndex))}</li>`
               )
@@ -738,6 +777,8 @@ export function renderDailyNewsletterEmail(
               <td style="padding:32px 34px 18px;">
                 <div style="font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:#9b7a4b;margin-bottom:14px;">${encodeHtmlEntities(content.editionLabel || "openlatter Daily")}</div>
                 <h1 style="margin:0 0 14px;font-size:30px;line-height:1.28;font-weight:750;color:#1d1a16;">${encodeHtmlEntities(content.title)}</h1>
+                ${paragraph("你好，openlatter 订阅者：")}
+                ${paragraph("这是你在 jassen.asia 主动订阅的每日 AI 资讯邮件。")}
                 ${content.intro.map(paragraph).join("\n")}
               </td>
             </tr>
@@ -752,9 +793,6 @@ export function renderDailyNewsletterEmail(
                 <div style="border-top:1px solid #e8ddca;padding-top:26px;">
                   <h2 style="margin:0 0 14px;font-size:21px;line-height:1.38;font-weight:700;color:#1d1a16;">${encodeHtmlEntities(content.takeawayTitle || "我的判断")}</h2>
                   ${content.takeaway.map(paragraph).join("\n")}
-                  <div style="margin-top:22px;background:#1d1a16;border-radius:12px;padding:18px 20px;color:#fffdf8;">
-                    <p style="margin:0;font-size:15px;line-height:1.7;color:#fffdf8;">${encodeHtmlEntities("如果想一起学习探讨 AI，欢迎加我的微信：18834032600")}</p>
-                  </div>
                   <p style="margin:22px 0 0;font-size:12px;line-height:1.6;color:#8a7b69;">${encodeHtmlEntities("这是一封 openlatter 每日 AI 资讯邮件。")}</p>
                   ${attributionHtml}
                   ${unsubscribeHtml}
@@ -777,6 +815,75 @@ export function renderDailyNewsletterEmail(
   }
 
   return { html, imageUrl, subject };
+}
+
+export function renderSpamSafeDailyNewsletterEmail(
+  content: DailyNewsletterContent,
+  unsubscribeUrl: string,
+  subjectLabel = "openlatter Daily"
+): DailyNewsletterEmail {
+  const subject = `${subjectLabel} 精简版 ${content.date}`;
+  const safeHeadlines = content.hotspots.map((hotspot) => {
+    const characters = Array.from(hotspot.headline);
+
+    return characters.length > 20
+      ? `${characters.slice(0, 20).join("")}...`
+      : hotspot.headline;
+  });
+  const headlines = safeHeadlines
+    .map(
+      (headline, index) => `
+                <li style="margin:0 0 16px;font-size:17px;line-height:1.6;color:#1d1a16;">
+                  <strong>${index + 1}.</strong> ${encodeHtmlEntities(headline)}
+                </li>`
+    )
+    .join("");
+  const html = `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${encodeHtmlEntities(subject)}</title>
+  </head>
+  <body style="margin:0;background:#f4efe5;color:#1d1a16;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,'Microsoft YaHei',sans-serif;line-height:1.7;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4efe5;padding:28px 14px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px;background:#fffdf8;border:1px solid #ded3c2;">
+            <tr>
+              <td style="padding:32px 34px;">
+                <div style="font-size:13px;color:#9b7a4b;margin-bottom:14px;">openlatter Daily</div>
+                <p style="margin:0 0 14px;font-size:15px;line-height:1.7;color:#34302a;">${encodeHtmlEntities("你好，openlatter 订阅者：")}</p>
+                <p style="margin:0 0 22px;font-size:15px;line-height:1.7;color:#34302a;">${encodeHtmlEntities("这是你在 jassen.asia 主动订阅的每日 AI 资讯简报，今天包含 5 条热点标题。")}</p>
+                <ol style="margin:0;padding-left:24px;">${headlines}
+                </ol>
+                <p style="margin:26px 0 0;font-size:12px;line-height:1.6;color:#8a7b69;">openlatter daily digest</p>
+                <p style="margin:10px 0 0;font-size:12px;line-height:1.6;color:#8a7b69;">
+                  <a href="${escapeHtml(unsubscribeUrl)}" style="color:#6f5635;text-decoration:underline;">${encodeHtmlEntities("取消订阅")}</a>
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+
+  assertAsciiOnly(html, "spam-safe newsletter html");
+  assertNoQuestionMarkMojibake(html, "spam-safe newsletter html");
+
+  const decoded = decodeNumericHtmlEntities(html);
+  const containsEveryHeadline = safeHeadlines.every((headline) =>
+    decoded.includes(headline)
+  );
+
+  if (!containsEveryHeadline) {
+    throw new Error("Spam-safe newsletter HTML entity decode check failed");
+  }
+
+  return { html, imageUrl: "", subject };
 }
 
 export function renderDailyNewsletterMarkdown(content: DailyNewsletterContent) {
@@ -848,7 +955,7 @@ async function fetchSubscribedRecipients() {
     .filter((email, index, array) => EMAIL_PATTERN.test(email) && array.indexOf(email) === index);
 }
 
-async function resolveRecipients(overrideRecipients?: string[]) {
+export async function resolveDailyNewsletterRecipients(overrideRecipients?: string[]) {
   const override = overrideRecipients
     ?.map((email) => email.trim().toLowerCase())
     .filter((email, index, array) => EMAIL_PATTERN.test(email) && array.indexOf(email) === index);
@@ -909,7 +1016,7 @@ export async function runDailyNewsletterWorkflow(
   let aiHot: AiHotDailyMetadata | undefined;
   let content: DailyNewsletterContent;
   let feed: DailyNewsletterRunResult["feed"];
-  const recipients = await resolveRecipients(options.recipients);
+  const recipients = await resolveDailyNewsletterRecipients(options.recipients);
 
   logWorkflowStage("recipients_resolved", workflowStartedAt, {
     contentSource,
@@ -954,9 +1061,7 @@ export async function runDailyNewsletterWorkflow(
   });
 
   const subjectLabel = contentSource === "ai-hot"
-    ? options.source === "manual"
-      ? "[TEST] openlatter AI 日报"
-      : "openlatter AI 日报"
+    ? "openlatter AI 日报"
     : "openlatter Daily";
   const email = renderDailyNewsletterEmail(content, image.url, undefined, subjectLabel);
   const markdown = renderDailyNewsletterMarkdown(content);
@@ -1003,12 +1108,15 @@ export async function runDailyNewsletterWorkflow(
   const dryRun = Boolean(options.dryRun);
   const sent: DailyNewsletterRunResult["sent"] = [];
   const failed: Array<{ email: string; error: string }> = [];
+  const newsletterAccountName = process.env.ALIYUN_DM_NEWSLETTER_ACCOUNT_NAME?.trim() || undefined;
   const deliveryReport: NewsletterDeliveryReport = {
     recipients: recipients.map((email) => ({ email, status: "pending" })),
     startedAt: new Date().toISOString(),
     status: "sending",
     subject: email.subject
   };
+  let deliveryVariant: "full" | "headlines-only" = "full";
+  let fallbackAccepted = 0;
   let deliveryPath: string | undefined;
 
   logWorkflowStage("archive_completed", workflowStartedAt, {
@@ -1026,19 +1134,50 @@ export async function runDailyNewsletterWorkflow(
       recipientReport.attemptedAt = new Date().toISOString();
 
       try {
-        const personalizedEmail = renderDailyNewsletterEmail(
-          content,
-          image.url,
-          createUnsubscribeUrl(recipient),
-          subjectLabel
-        );
-        const result = await sendEmail({
-          htmlBody: personalizedEmail.html,
-          subject: personalizedEmail.subject,
-          toAddress: recipient
-        });
+        const unsubscribeUrl = createUnsubscribeUrl(recipient);
+        let personalizedEmail = deliveryVariant === "full"
+          ? renderDailyNewsletterEmail(content, image.url, unsubscribeUrl, subjectLabel)
+          : renderSpamSafeDailyNewsletterEmail(content, unsubscribeUrl, subjectLabel);
+        recipientReport.variant = deliveryVariant;
+        recipientReport.subject = personalizedEmail.subject;
+        let result: SendEmailResult;
+
+        try {
+          result = await sendEmail({
+            accountName: newsletterAccountName,
+            htmlBody: personalizedEmail.html,
+            subject: personalizedEmail.subject,
+            toAddress: recipient
+          });
+        } catch (error) {
+          if (deliveryVariant !== "full" || !isDirectMailSpamRejection(error)) {
+            throw error;
+          }
+
+          const fallbackReason = readErrorMessage(error);
+          deliveryVariant = "headlines-only";
+          deliveryReport.fallbackActivatedAt = new Date().toISOString();
+          deliveryReport.fallbackReason = fallbackReason;
+          recipientReport.fallbackReason = fallbackReason;
+          recipientReport.variant = deliveryVariant;
+          personalizedEmail = renderSpamSafeDailyNewsletterEmail(
+            content,
+            unsubscribeUrl,
+            subjectLabel
+          );
+          recipientReport.subject = personalizedEmail.subject;
+          result = await sendEmail({
+            accountName: newsletterAccountName,
+            htmlBody: personalizedEmail.html,
+            subject: personalizedEmail.subject,
+            toAddress: recipient
+          });
+        }
 
         sent.push({ email: recipient, result });
+        if (recipientReport.variant === "headlines-only") {
+          fallbackAccepted += 1;
+        }
         recipientReport.envId = result.envId;
         recipientReport.requestId = result.requestId;
         recipientReport.status = "accepted";
@@ -1060,6 +1199,7 @@ export async function runDailyNewsletterWorkflow(
 
     logWorkflowStage("delivery_completed", workflowStartedAt, {
       acceptedCount: sent.length,
+      fallbackAccepted,
       failedCount: failed.length
     });
 
@@ -1073,6 +1213,7 @@ export async function runDailyNewsletterWorkflow(
     archive,
     contentSource,
     delivery: {
+      fallbackAccepted,
       failed: failed.length,
       path: deliveryPath,
       status: dryRun ? "dry-run" : "completed"
