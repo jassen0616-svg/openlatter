@@ -102,6 +102,7 @@
 - 邮件发送使用阿里云 DirectMail。
 - 欢迎邮件继续使用触发型地址 `ALIYUN_DM_ACCOUNT_NAME`；每日 newsletter 使用批量型地址 `ALIYUN_DM_NEWSLETTER_ACCOUNT_NAME`。
 - 每日完整正文若被阿里云以 `InvalidSendMail.Spam` 拒绝，会立即切换到不同主题的精简版；精简版保留 5 条热点，每条显示原始标题前 20 个字符，并保留称呼、订阅说明和有效退订入口。
+- 如果某个收件人的五标题精简版仍被拒绝，会再切换到“阅读入口”版本，只保留 AI HOT 当日日报链接和有效退订入口；每个收件人独立降级，不会因为一个地址的评分降低其他地址可收到的内容量。
 - 邮件正文不得出现微信、QQ、二维码或直接社交媒体引流内容；阿里云 DirectMail 当前内容规则会因此拒绝邮件。
 - 每日 newsletter 默认会调用 AI Gateway 生成头图。
 - 生成后的头图会上传到 Supabase Storage 的公开 bucket，再把公开 URL 写入邮件 HTML。
@@ -111,7 +112,7 @@
 - 每次 AI 文本生成尝试最多等待 45 秒；每日头图最多使用 60 秒，并受工作流发送前总预算约束。
 - 如果头图预算不足或生成失败，必须使用默认头图继续发送，不能让图片阻塞整封日报。
 - 阿里云单封请求设置连接和读取超时，避免某一个收件人长期占用 Vercel Function。
-- 非 dry-run 每次归档目录都会维护 `delivery.json`，逐个记录 `pending`、`accepted` 或 `failed`，并记录 `full` 或 `headlines-only` 版本、实际主题和降级原因，用于在 Vercel 短期日志过期后继续审计与安全补发。
+- 非 dry-run 每次归档目录都会维护 `delivery.json`，逐个记录 `pending`、`accepted` 或 `failed`，并记录 `full`、`headlines-only` 或 `delivery-notice` 版本、实际主题和各层降级原因，用于在 Vercel 短期日志过期后继续审计与安全补发。
 
 重要编码规则：
 
@@ -469,8 +470,8 @@ codex exec --cd "D:\项目\openlatter" --sandbox read-only "Use the configured M
 Git branch: codex/confirm-unsubscribe
 Git remote: https://github.com/jassen0616-svg/openlatter.git
 Vercel production: https://jassen.asia
-Latest deployment: https://openlatter-m3ko8gsld-jassen0616-8792s-projects.vercel.app
-Latest deployment ID: dpl_54TPCMd8vRsLb62njYbS1jKbJ8Jb
+Latest deployment: https://openlatter-8bwnriodm-jassen0616-8792s-projects.vercel.app
+Latest deployment ID: dpl_7rTA8qjCCgL5F3ik5aWwPknzsD7u
 Supabase project URL: https://inmshbmejdjlgqpkklwt.supabase.co
 Supabase subscription table: public.newsletter_subscribers
 Supabase archive bucket: newsletter-archives
@@ -482,7 +483,7 @@ Daily newsletter mode: production
 Daily newsletter default content source: ai-hot (5 AI HOT items + AI Gateway editorial framing)
 Daily newsletter crons: 0 0 * * * and 0 3 * * * UTC, equivalent to 08:00 and 11:00 Asia/Shanghai
 Last verified subscribed count: 6
-Deployment note: the latest production deployment predates the final five-title truncation and partial-recipient recovery safeguards in the current Git branch; GitHub push does not automatically deploy this project.
+Deployment note: the latest production deployment contains the three-level DirectMail fallback and active-subscriber coverage check described above.
 ```
 
 最近一次生产环境默认工作流验证：
@@ -520,6 +521,10 @@ Delivery report: daily/2026/07/16/2026-07-16-2026-07-16T06-25-30-205Z/delivery.j
 - 每日 newsletter 已从触发型 `hello@mail.jassen.asia` 切换到批量型 `newsletter@mail.jassen.asia`；欢迎邮件仍使用触发型地址。
 - 完整 5 条标题叠加正文会触发阿里云累计内容评分。保留 5 条、每条截取原文前 20 个字符的合规精简版已在 2026-07-21 对 `1065974816@qq.com` 实发通过：`EnvId 600000338816757068`，`RequestId 019F80AB-DEBD-5841-8185-088DDEF3BC28`。
 - 自动恢复任务会汇总当天所有 `delivery.json` 中的 `accepted` 收件人，只补发当前仍订阅且尚未成功的邮箱，避免部分成功后全量重发。
+- 最终生产路由验证中，单收件人完整工作流先触发五标题精简版并成功，归档为 `daily/2026/07/20/2026-07-20-2026-07-20T18-03-20-010Z/delivery.json`。
+- 第一次恢复正确排除该收件人，对其余 5 人发送，2 人通过五标题精简版，3 人仍被内容评分拒绝。
+- 加入第三层“阅读入口”后，第二次恢复正确识别 6 个有效订阅者、排除 3 个已成功者，并让剩余 3 人全部返回 `SendOk / 250 Send Mail OK`；归档为 `daily/2026/07/20/2026-07-20-2026-07-20T18-13-39-215Z/delivery.json`。
+- 再次调用恢复接口返回 `all-current-recipients-already-accepted` 且 `sent: []`，验证 6/6 覆盖和重复调用幂等性。
 
 最近一次每日 newsletter 端到端验证：
 

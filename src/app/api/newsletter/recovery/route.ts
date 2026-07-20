@@ -35,18 +35,9 @@ export async function GET(request: NextRequest) {
 
   try {
     const recoveryState = await findNewsletterDeliveryRecoveryState(date);
-
-    if (recoveryState.completedDelivery) {
-      return jsonResponse({
-        ok: true,
-        skipped: true,
-        reason: "already-delivered",
-        delivery: recoveryState.completedDelivery
-      });
-    }
-
     const acceptedEmails = new Set(recoveryState.acceptedEmails);
-    const recipients = (await resolveDailyNewsletterRecipients()).filter(
+    const activeRecipients = await resolveDailyNewsletterRecipients();
+    const recipients = activeRecipients.filter(
       (email) => !acceptedEmails.has(email)
     );
 
@@ -54,7 +45,10 @@ export async function GET(request: NextRequest) {
       return jsonResponse({
         ok: true,
         skipped: true,
-        reason: "all-current-recipients-already-accepted"
+        reason: "all-current-recipients-already-accepted",
+        acceptedRecipients: acceptedEmails.size,
+        activeRecipients: activeRecipients.length,
+        delivery: recoveryState.completedDelivery
       });
     }
 
@@ -64,6 +58,7 @@ export async function GET(request: NextRequest) {
       ok: true,
       skipped: false,
       excludedAcceptedRecipients: acceptedEmails.size,
+      activeRecipients: activeRecipients.length,
       result
     });
   } catch (error) {

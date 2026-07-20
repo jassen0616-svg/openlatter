@@ -136,6 +136,7 @@ export type DailyNewsletterRunResult = {
   delivery: {
     fallbackAccepted: number;
     failed: number;
+    noticeAccepted: number;
     path?: string;
     status: "completed" | "dry-run";
   };
@@ -165,17 +166,20 @@ export type DailyNewsletterRunResult = {
   title: string;
 };
 
+type NewsletterDeliveryVariant = "delivery-notice" | "full" | "headlines-only";
+
 type NewsletterDeliveryRecipient = {
   attemptedAt?: string;
   email: string;
   envId?: string;
   error?: string;
   fallbackReason?: string;
+  noticeReason?: string;
   requestId?: string;
   status: "accepted" | "failed" | "pending";
   subject?: string;
   updatedAt?: string;
-  variant?: "full" | "headlines-only";
+  variant?: NewsletterDeliveryVariant;
 };
 
 type NewsletterDeliveryReport = {
@@ -886,6 +890,59 @@ export function renderSpamSafeDailyNewsletterEmail(
   return { html, imageUrl: "", subject };
 }
 
+export function renderDeliveryNoticeDailyNewsletterEmail(
+  content: DailyNewsletterContent,
+  unsubscribeUrl: string,
+  subjectLabel = "openlatter Daily"
+): DailyNewsletterEmail {
+  const subject = `${subjectLabel} 阅读入口 ${content.date}`;
+  const sourceUrl = content.attribution?.url || "https://jassen.asia";
+  const sourceLabel = content.attribution?.label || "openlatter";
+  const html = `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${encodeHtmlEntities(subject)}</title>
+  </head>
+  <body style="margin:0;background:#f4efe5;color:#1d1a16;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,'Microsoft YaHei',sans-serif;line-height:1.7;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4efe5;padding:28px 14px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px;background:#fffdf8;border:1px solid #ded3c2;">
+            <tr>
+              <td style="padding:32px 34px;">
+                <div style="font-size:13px;color:#9b7a4b;margin-bottom:14px;">openlatter Daily</div>
+                <p style="margin:0 0 14px;font-size:15px;line-height:1.7;color:#34302a;">${encodeHtmlEntities("你好，openlatter 订阅者：")}</p>
+                <p style="margin:0 0 20px;font-size:15px;line-height:1.7;color:#34302a;">${encodeHtmlEntities("这是你在 jassen.asia 主动订阅的每日 AI 资讯邮件。今天的 5 条热点可在来源页面查看。")}</p>
+                <p style="margin:0;font-size:15px;line-height:1.7;">
+                  <a href="${escapeHtml(sourceUrl)}" style="color:#6f5635;text-decoration:underline;">${encodeHtmlEntities(`查看今日 ${sourceLabel} 日报`)}</a>
+                </p>
+                <p style="margin:26px 0 0;font-size:12px;line-height:1.6;color:#8a7b69;">
+                  <a href="${escapeHtml(unsubscribeUrl)}" style="color:#6f5635;text-decoration:underline;">${encodeHtmlEntities("取消订阅")}</a>
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+
+  assertAsciiOnly(html, "delivery notice newsletter html");
+  assertNoQuestionMarkMojibake(html, "delivery notice newsletter html");
+
+  const decoded = decodeNumericHtmlEntities(html);
+
+  if (!decoded.includes("5 条热点") || !decoded.includes("取消订阅")) {
+    throw new Error("Delivery notice newsletter HTML entity decode check failed");
+  }
+
+  return { html, imageUrl: "", subject };
+}
+
 export function renderDailyNewsletterMarkdown(content: DailyNewsletterContent) {
   const markdown = [
     `# ${content.title}`,
@@ -1117,6 +1174,7 @@ export async function runDailyNewsletterWorkflow(
   };
   let deliveryVariant: "full" | "headlines-only" = "full";
   let fallbackAccepted = 0;
+  let noticeAccepted = 0;
   let deliveryPath: string | undefined;
 
   logWorkflowStage("archive_completed", workflowStartedAt, {
@@ -1135,48 +1193,61 @@ export async function runDailyNewsletterWorkflow(
 
       try {
         const unsubscribeUrl = createUnsubscribeUrl(recipient);
-        let personalizedEmail = deliveryVariant === "full"
-          ? renderDailyNewsletterEmail(content, image.url, unsubscribeUrl, subjectLabel)
-          : renderSpamSafeDailyNewsletterEmail(content, unsubscribeUrl, subjectLabel);
-        recipientReport.variant = deliveryVariant;
-        recipientReport.subject = personalizedEmail.subject;
+        const sendVariant = async (variant: NewsletterDeliveryVariant) => {
+          const personalizedEmail = variant === "full"
+            ? renderDailyNewsletterEmail(content, image.url, unsubscribeUrl, subjectLabel)
+            : variant === "headlines-only"
+              ? renderSpamSafeDailyNewsletterEmail(content, unsubscribeUrl, subjectLabel)
+              : renderDeliveryNoticeDailyNewsletterEmail(content, unsubscribeUrl, subjectLabel);
+
+          recipientReport.variant = variant;
+          recipientReport.subject = personalizedEmail.subject;
+
+          return sendEmail({
+            accountName: newsletterAccountName,
+            htmlBody: personalizedEmail.html,
+            subject: personalizedEmail.subject,
+            toAddress: recipient
+          });
+        };
         let result: SendEmailResult;
 
         try {
-          result = await sendEmail({
-            accountName: newsletterAccountName,
-            htmlBody: personalizedEmail.html,
-            subject: personalizedEmail.subject,
-            toAddress: recipient
-          });
+          result = await sendVariant(deliveryVariant);
         } catch (error) {
-          if (deliveryVariant !== "full" || !isDirectMailSpamRejection(error)) {
+          if (!isDirectMailSpamRejection(error)) {
             throw error;
           }
 
-          const fallbackReason = readErrorMessage(error);
-          deliveryVariant = "headlines-only";
-          deliveryReport.fallbackActivatedAt = new Date().toISOString();
-          deliveryReport.fallbackReason = fallbackReason;
-          recipientReport.fallbackReason = fallbackReason;
-          recipientReport.variant = deliveryVariant;
-          personalizedEmail = renderSpamSafeDailyNewsletterEmail(
-            content,
-            unsubscribeUrl,
-            subjectLabel
-          );
-          recipientReport.subject = personalizedEmail.subject;
-          result = await sendEmail({
-            accountName: newsletterAccountName,
-            htmlBody: personalizedEmail.html,
-            subject: personalizedEmail.subject,
-            toAddress: recipient
-          });
+          if (deliveryVariant === "full") {
+            const fallbackReason = readErrorMessage(error);
+            deliveryVariant = "headlines-only";
+            deliveryReport.fallbackActivatedAt = new Date().toISOString();
+            deliveryReport.fallbackReason = fallbackReason;
+            recipientReport.fallbackReason = fallbackReason;
+
+            try {
+              result = await sendVariant("headlines-only");
+            } catch (fallbackError) {
+              if (!isDirectMailSpamRejection(fallbackError)) {
+                throw fallbackError;
+              }
+
+              recipientReport.noticeReason = readErrorMessage(fallbackError);
+              result = await sendVariant("delivery-notice");
+            }
+          } else {
+            recipientReport.noticeReason = readErrorMessage(error);
+            result = await sendVariant("delivery-notice");
+          }
         }
 
         sent.push({ email: recipient, result });
-        if (recipientReport.variant === "headlines-only") {
+        if (recipientReport.variant !== "full") {
           fallbackAccepted += 1;
+        }
+        if (recipientReport.variant === "delivery-notice") {
+          noticeAccepted += 1;
         }
         recipientReport.envId = result.envId;
         recipientReport.requestId = result.requestId;
@@ -1200,7 +1271,8 @@ export async function runDailyNewsletterWorkflow(
     logWorkflowStage("delivery_completed", workflowStartedAt, {
       acceptedCount: sent.length,
       fallbackAccepted,
-      failedCount: failed.length
+      failedCount: failed.length,
+      noticeAccepted
     });
 
     if (failed.length) {
@@ -1215,6 +1287,7 @@ export async function runDailyNewsletterWorkflow(
     delivery: {
       fallbackAccepted,
       failed: failed.length,
+      noticeAccepted,
       path: deliveryPath,
       status: dryRun ? "dry-run" : "completed"
     },
